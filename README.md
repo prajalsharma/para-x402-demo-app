@@ -25,7 +25,7 @@ This project showcases how to build a pay-per-use application using Para's embed
 ## Installation
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/prajalsharma/para-x402-demo-app/
 cd client
 bun install
 ```
