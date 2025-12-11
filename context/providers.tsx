@@ -36,8 +36,8 @@ export function Providers({
         paraModalConfig={{
           disableEmailLogin: false,
           disablePhoneLogin: false,
-          authLayout: ["EXTERNAL:FULL"],
-          oAuthMethods: [],
+          authLayout: ["AUTH:FULL"],
+          oAuthMethods: ["GOOGLE", "TWITTER", "APPLE", "DISCORD", "FACEBOOK", "FARCASTER", "TELEGRAM"],
           onRampTestMode: true,
           recoverySecretStepEnabled: true,
           twoFactorAuthEnabled: false,
