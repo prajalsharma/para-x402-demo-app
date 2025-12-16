@@ -1,14 +1,10 @@
 import { NextRequest } from "next/server";
-import { generateSlots, checkWin } from "@/utils/slots";
 
 export async function GET(req: NextRequest) {
-  const slots = generateSlots();
-  const { win, prize } = checkWin(slots);
-
+  // if payment is successful, return the data
   return Response.json({
-    slots,
-    win,
-    prize,
+    success: true,
+    message: "Checkout complete! Payment received.",
     timestamp: Date.now(),
   });
 }

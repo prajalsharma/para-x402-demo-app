@@ -21,18 +21,6 @@ export function Providers({
         config={{
           appName: "x402 demo",
         }}
-        externalWalletConfig={{
-          wallets: ["METAMASK"],
-          includeWalletVerification: true,
-          evmConnector: {
-            config: {
-              chains: [baseSepolia],
-            },
-          },
-          walletConnect: {
-            projectId: process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID!,
-          },
-        }}
         paraModalConfig={{
           disableEmailLogin: false,
           disablePhoneLogin: false,

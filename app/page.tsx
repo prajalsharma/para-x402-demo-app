@@ -7,12 +7,27 @@ import {
   createParaAccount,
 } from "@getpara/viem-v2-integration";
 import { baseSepolia } from "viem/chains";
-import { http, formatUnits, createPublicClient } from "viem";
+import { http, formatUnits } from "viem";
 import { useLogout } from "@getpara/react-sdk";
 import { USDC_ADDRESS, USDC_ABI } from "@/utils/contract";
-import { SYMBOLS } from "@/utils/constants";
-import { GameState } from "@/types/types";
 import { publicClient } from "@/utils/viem";
+
+const FOOD_ITEMS = [
+  { id: 1, emoji: "🍎", name: "Apple", price: 0.001 },
+  { id: 2, emoji: "🍌", name: "Banana", price: 0.001 },
+  { id: 3, emoji: "🍕", name: "Pizza", price: 0.002 },
+  { id: 4, emoji: "🧃", name: "Juice", price: 0.001 },
+  { id: 5, emoji: "🍩", name: "Donut", price: 0.001 },
+  { id: 6, emoji: "🍔", name: "Burger", price: 0.002 },
+  { id: 7, emoji: "🍿", name: "Popcorn", price: 0.001 },
+  { id: 8, emoji: "🍫", name: "Chocolate", price: 0.001 },
+  { id: 9, emoji: "🥤", name: "Soda", price: 0.001 },
+  { id: 10, emoji: "🍦", name: "Ice Cream", price: 0.001 },
+  { id: 11, emoji: "🌮", name: "Taco", price: 0.002 },
+  { id: 12, emoji: "🍪", name: "Cookie", price: 0.001 },
+];
+
+type CartItem = typeof FOOD_ITEMS[number];
 
 export default function Home() {
   const { openModal } = useModal();
@@ -21,33 +36,24 @@ export default function Home() {
   const para = useClient();
   const { logout } = useLogout();
 
-  const [gameState, setGameState] = useState<GameState>("idle");
-  const [slots, setSlots] = useState(["?", "?", "?"]);
-  const [result, setResult] = useState<{
-    win: boolean;
-    prize: string;
-    slots: string[];
-  } | null>(null);
-  const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
-  const [ethBalance, setEthBalance] = useState<string | null>(null);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [isPaying, setIsPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
 
   const fetchBalances = useCallback(async () => {
     if (!wallet?.address) return;
 
     try {
-      const [usdcBal, ethBal] = await Promise.all([
-        publicClient.readContract({
-          address: USDC_ADDRESS,
-          abi: USDC_ABI,
-          functionName: "balanceOf",
-          args: [wallet.address as `0x${string}`],
-        }),
-        publicClient.getBalance({ address: wallet.address as `0x${string}` }),
-      ]);
+      const usdcBal = await publicClient.readContract({
+        address: USDC_ADDRESS,
+        abi: USDC_ABI,
+        functionName: "balanceOf",
+        args: [wallet.address as `0x${string}`],
+      });
 
       setUsdcBalance(formatUnits(usdcBal, 6));
-      setEthBalance(formatUnits(ethBal, 18));
     } catch (err) {
       console.error("Failed to fetch balances:", err);
     }
@@ -59,69 +65,38 @@ export default function Home() {
     }
   }, [isConnected, wallet?.address, fetchBalances]);
 
-  const spinAnimation = useCallback(() => {
-    const interval = setInterval(() => {
-      setSlots([
-        SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-        SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-        SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-      ]);
-    }, 100);
-    return interval;
-  }, []);
+  const addToCart = (item: CartItem) => {
+    setCart((prev) => [...prev, item]);
+    setError(null);
+    setSuccess(null);
+  };
 
-  const handlePlay = async () => {
+  const removeFromCart = (index: number) => {
+    setCart((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const totalPrice = cart.reduce((sum, item) => sum + item.price, 0);
+
+  const handlePayment = async () => {
     if (!isConnected || !para) {
       openModal();
       return;
     }
 
-    const usdcNum = parseFloat(usdcBalance || "0");
-    const ethNum = parseFloat(ethBalance || "0");
-
-    if (usdcNum < 0.005) {
-      setError("Insufficient USDC balance. You need at least $0.005 to play.");
+    if (cart.length === 0) {
+      setError("Add items to your cart first!");
       return;
     }
-    if (ethNum < 0.0001) {
-      setError(
-        "Insufficient ETH for gas. Please add some ETH for transaction fees."
-      );
+
+    const usdcNum = parseFloat(usdcBalance || "0");
+    if (usdcNum < totalPrice) {
+      setError(`Insufficient USDC. You need at least $${totalPrice.toFixed(3)}`);
       return;
     }
 
     setError(null);
-    setResult(null);
-    setGameState("spinning");
-
-    const spinInterval = spinAnimation();
-
-    try {
-      const response = await fetch("/api/premium");
-
-      if (response.status === 402) {
-        clearInterval(spinInterval);
-        setGameState("payment_required");
-        return;
-      }
-
-      clearInterval(spinInterval);
-      const data = await response.json();
-      setSlots(data.slots);
-      setResult(data);
-      setGameState("result");
-    } catch (err) {
-      clearInterval(spinInterval);
-      setError("Something went wrong. Please try again.");
-      setGameState("idle");
-    }
-  };
-
-  const handlePayment = async () => {
-    if (!para) return;
-
-    setGameState("paying");
-    const spinInterval = spinAnimation();
+    setSuccess(null);
+    setIsPaying(true);
 
     try {
       const viemAccount = createParaAccount(para);
@@ -134,190 +109,165 @@ export default function Home() {
       const { wrapFetchWithPayment } = await import("x402-fetch");
       const fetchWithPayment = wrapFetchWithPayment(fetch, walletClient as any);
 
+      // Add timeout to prevent infinite loading
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
       const res = await fetchWithPayment("/api/premium", {
         method: "GET",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
       });
 
-      clearInterval(spinInterval);
+      clearTimeout(timeoutId);
+
       const data = await res.json();
-      setSlots(data.slots);
-      setResult(data);
-      setGameState("result");
-      fetchBalances();
+      
+      if (res.ok && data.success) {
+        setSuccess(`🎉 Checkout complete! Enjoy your ${cart.map(i => i.emoji).join(" ")}`);
+        setCart([]);
+        fetchBalances();
+      } else {
+        throw new Error(data.message || "Payment failed");
+      }
     } catch (err: any) {
-      clearInterval(spinInterval);
-      setError(err.message || "Payment failed. Please try again.");
-      setGameState("idle");
+      console.error("Payment error:", err);
+      if (err.name === "AbortError") {
+        setError("Payment timed out. Please try again.");
+      } else if (err.message?.includes("signing")) {
+        setError("Wallet signing failed. Please ensure you're using a Para embedded wallet, not an external wallet like MetaMask.");
+      } else {
+        setError(err.message || "Payment failed. Please try again.");
+      }
+    } finally {
+      setIsPaying(false);
     }
   };
 
-  const resetGame = () => {
-    setGameState("idle");
-    setSlots(["?", "?", "?"]);
-    setResult(null);
-    setError(null);
-  };
-
   return (
-    <div className="min-h-screen bg-white font-mono text-black">
-      {/* Navbar */}
-      <nav className="border-b border-black px-6 py-4 flex justify-between items-center">
-        <span className="text-lg font-bold">SLOT402</span>
-        <div className="flex items-center gap-4">
-          {isConnected && wallet?.address ? (
-            <>
-              <span className="text-sm">
+    <div className="min-h-screen bg-gradient-to-br from-violet-600 via-purple-600 to-violet-700 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-6">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-purple-600">x402 Shop</h1>
+          <p className="text-gray-500 text-sm">x402 + Para Wallet Demo</p>
+        </div>
+
+        {/* Wallet Connection */}
+        {isConnected && wallet?.address ? (
+          <div className="mb-6 border-2 border-green-500 rounded-xl p-4 flex items-center justify-between">
+            <div>
+              <span className="text-green-600 text-sm font-medium block">Connected</span>
+              <span className="text-gray-700 font-mono text-sm">
                 {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
               </span>
-              <button
-                onClick={() => logout()}
-                className="text-sm border border-black px-3 py-1 hover:bg-black hover:text-white transition-colors"
-              >
-                logout
-              </button>
-            </>
-          ) : (
+              {usdcBalance && (
+                <span className="text-gray-500 text-xs block mt-1">
+                  Balance: ${parseFloat(usdcBalance).toFixed(4)} USDC
+                </span>
+              )}
+            </div>
             <button
-              onClick={() => openModal()}
-              className="text-sm border border-black px-3 py-1 hover:bg-black hover:text-white transition-colors"
+              onClick={() => logout()}
+              className="bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
             >
-              connect wallet
+              Logout
             </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => openModal()}
+            className="mb-6 w-full bg-purple-600 text-white py-3 rounded-xl font-medium hover:bg-purple-700 transition-colors"
+          >
+            Connect Wallet
+          </button>
+        )}
+
+        {/* Food Grid */}
+        <div className="grid grid-cols-6 gap-2 mb-6">
+          {FOOD_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => addToCart(item)}
+              className="aspect-square bg-gray-50 rounded-xl flex items-center justify-center text-3xl hover:bg-gray-100 hover:scale-105 transition-all active:scale-95 shadow-sm"
+              title={`${item.name} - $${item.price}`}
+            >
+              {item.emoji}
+            </button>
+          ))}
+        </div>
+
+        {/* Cart */}
+        <div className="bg-gray-50 rounded-xl p-4 mb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-2xl">🛒</span>
+            <span className="font-semibold text-gray-800">Cart ({cart.length})</span>
+            {cart.length > 0 && (
+              <span className="ml-auto text-purple-600 font-medium">
+                ${totalPrice.toFixed(3)}
+              </span>
+            )}
+          </div>
+          
+          {cart.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-4">
+              Click on items to add them to cart
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {cart.map((item, index) => (
+                <button
+                  key={index}
+                  onClick={() => removeFromCart(index)}
+                  className="bg-white rounded-lg p-2 text-2xl shadow-sm hover:bg-red-50 hover:scale-105 transition-all"
+                  title="Click to remove"
+                >
+                  {item.emoji}
+                </button>
+              ))}
+            </div>
           )}
         </div>
-      </nav>
 
-      {/* Main */}
-      <main className="max-w-md mx-auto px-6 py-12">
-        {/* Balance Info */}
-        {isConnected && usdcBalance && ethBalance && (
-          <div className="mb-8 text-sm border border-black p-4 text-black bg-gray-50">
-            <div className="flex justify-between mb-1">
-              <span className="text-black">USDC:</span>
-              <span className="text-black font-medium">
-                ${parseFloat(usdcBalance).toFixed(4)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-black">ETH (gas):</span>
-              <span className="text-black font-medium">
-                {parseFloat(ethBalance).toFixed(6)}
-              </span>
-            </div>
-            {parseFloat(usdcBalance) < 0.005 && (
-              <p className="mt-2 text-xs text-red-600">
-                ⚠ need at least $0.005 USDC
-              </p>
-            )}
-            {parseFloat(ethBalance) < 0.0001 && (
-              <p className="mt-2 text-xs text-red-600">
-                ⚠ need ETH for gas fees
-              </p>
-            )}
+        {/* Messages */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm text-center">
+            {error}
           </div>
         )}
 
-        {/* Slot Machine */}
-        <div className="border border-black p-8">
-          <div className="text-center mb-6">
-            <h1 className="text-xl mb-1">SPIN TO WIN</h1>
-            <p className="text-xs text-gray-600">$0.005 per spin</p>
+        {success && (
+          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-xl text-green-600 text-sm text-center">
+            {success}
           </div>
+        )}
 
-          {/* Slots Display */}
-          <div className="flex justify-center gap-2 mb-6">
-            {slots.map((symbol, i) => (
-              <div
-                key={i}
-                className="w-20 h-20 border border-black flex items-center justify-center text-4xl bg-gray-50"
-              >
-                {symbol}
-              </div>
-            ))}
-          </div>
-
-          {/* Result */}
-          {gameState === "result" && result && (
-            <div
-              className={`text-center mb-6 p-4 ${
-                result.win
-                  ? "bg-green-50 border border-green-600"
-                  : "bg-gray-50 border border-gray-300"
-              }`}
-            >
-              <p className="text-lg font-bold">
-                {result.win ? "🎉 WINNER!" : "TRY AGAIN"}
-              </p>
-              {result.win && <p className="text-sm">{result.prize}</p>}
-            </div>
+        {/* Pay Button */}
+        <button
+          onClick={handlePayment}
+          disabled={isPaying || cart.length === 0}
+          className={`w-full py-4 rounded-xl font-medium text-white flex items-center justify-center gap-2 transition-all ${
+            isPaying || cart.length === 0
+              ? "bg-gray-300 cursor-not-allowed"
+              : "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 shadow-lg hover:shadow-xl"
+          }`}
+        >
+          {isPaying ? (
+            <>
+              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Processing...
+            </>
+          ) : (
+            <>
+              <span className="text-xl">💳</span>
+              Pay with USDC
+            </>
           )}
-
-          {/* Error */}
-          {error && (
-            <div className="text-center mb-6 p-4 bg-red-50 border border-red-600">
-              <p className="text-sm text-red-600">{error}</p>
-            </div>
-          )}
-
-          {/* Payment Required */}
-          {gameState === "payment_required" && (
-            <div className="text-center mb-6 p-4 bg-yellow-50 border border-yellow-600">
-              <p className="text-sm mb-3">payment required to spin</p>
-              <button
-                onClick={handlePayment}
-                className="text-sm bg-black text-white px-6 py-2 hover:bg-gray-800 transition-colors"
-              >
-                pay $0.005 & spin
-              </button>
-            </div>
-          )}
-
-          {/* Action Button */}
-          <div className="text-center">
-            {gameState === "idle" && (
-              <button
-                onClick={handlePlay}
-                className="text-sm bg-black text-white px-8 py-3 hover:bg-gray-800 transition-colors"
-              >
-                {isConnected ? "PLAY" : "CONNECT TO PLAY"}
-              </button>
-            )}
-
-            {(gameState === "spinning" || gameState === "paying") && (
-              <button
-                disabled
-                className="text-sm bg-gray-400 text-white px-8 py-3 cursor-not-allowed"
-              >
-                {gameState === "paying" ? "PROCESSING..." : "SPINNING..."}
-              </button>
-            )}
-
-            {gameState === "result" && (
-              <button
-                onClick={resetGame}
-                className="text-sm border border-black px-8 py-3 hover:bg-black hover:text-white transition-colors"
-              >
-                PLAY AGAIN
-              </button>
-            )}
-
-            {gameState === "payment_required" && (
-              <button
-                onClick={resetGame}
-                className="text-xs text-gray-500 mt-4 underline"
-              >
-                cancel
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <p className="text-center text-xs text-gray-400 mt-8">
-          powered by Para & x402 protocol
-        </p>
-      </main>
+        </button>
+      </div>
     </div>
   );
 }
